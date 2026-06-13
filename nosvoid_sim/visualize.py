@@ -7,18 +7,19 @@ Put this window next to the real game and check they behave the same.
 
 CONTROLS
   Arrow keys / WASD ... move the agent one tile (hold to repeat)
-  SPACE .............. attack the nearest mob in range
+  SPACE .............. attack: pick nearest mob in range, blast AoE around it
   R .................. reset (respawn all mobs, restore HP)
   ESC ................ quit
 
-WHAT'S MODELLED (all from live-verified data — see farm_map_2706.py / vault):
+WHAT'S MODELLED (LIVE-VERIFIED — packet log + Cheat Engine memory reads):
   - real collision grid of map 2706 (walkable vs blocked)
   - 90 mobs (45 Bouncing Jelly 6232, 45 Ice Golem 6233) at real spawn points
-  - aggro radius = 12 tiles (confirmed): a mob starts chasing within 12
-  - chase: aggroed mob steps toward you; attacks when adjacent
-  - your damage ~98k-197k/hit (random in range); mob HP Jelly~300k, Golem 345k
-  - mob damage to you = 465/hit; your HP = 54754
-  - skill cooldown respected (basic skill ~ short CD)
+  - AUTOATTACK = TARGETED AoE: you attack a mob within ~9 tiles (targeting range);
+    the blast hits EVERY mob within 2 tiles (Chebyshev, 5x5) of that TARGET — not of you
+  - per-mob damage: Jelly ~101k, Golem ~52k (Golem has higher defence); crit = x2, per target
+  - mob HP: BOTH ~306k (Golem is NOT 345k; it just takes ~half damage -> ~2x hits)
+  - cooldown 0.7s, cast/animation ~0.65s; mob damage to you 465/hit; your HP 54754
+  - aggro radius 12 tiles (Chebyshev): a mob starts chasing within 12; attacks when in range
 
 This is a VALIDATION tool, not the agent. No RL here. Run:
     pip install pygame
@@ -39,19 +40,29 @@ from .grid import Grid
 from .pathfind import chebyshev
 from . import _map2706_data as M
 
-# ---- tuning (from verified data) ----
-AGGRO = 12                 # CONFIRMED tiles
+# ---- tuning (LIVE-VERIFIED: packet log + Cheat Engine memory reads) ----
+AGGRO = 12                 # CONFIRMED tiles (Chebyshev) — mob starts chasing within 12
 PLAYER_HP_MAX = 54754      # CONFIRMED
-PLAYER_DMG = (98000, 197000)   # CONFIRMED range per hit
-MOB_DMG = 465              # CONFIRMED per hit
-HP = {6232: 300000, 6233: 345000}     # 6232 FITTED, 6233 CONFIRMED
+MOB_DMG = 465              # CONFIRMED incoming dmg per mob hit
+
+# Autoattack = TARGETED AoE ("Magma Ball"). You attack a target within TARGET_RANGE;
+# the blast hits every mob within AOE_RADIUS of the TARGET (NOT of you).  [measured live]
+TARGET_RANGE = 9           # targeting/cast reach in tiles (Chebyshev) — SkillDataEntry range
+AOE_RADIUS   = 2           # blast radius around the TARGET (Chebyshev = 5x5)  [measured ~2]
+PLAYER_CD_MS = 700         # CONFIRMED cooldown (su token[5]=7)
+CAST_MS      = 654         # CONFIRMED cast/animation (ct->su); effective cycle ~max(CD,cast)
+
+# Per-mob damage you deal (base = non-crit); crit = x2, rolled independently per target.
+PLAYER_DMG_BASE = {6232: 101000, 6233: 52000}   # Jelly ~101k / Golem ~52k (Golem higher def)
+CRIT_MULT = 2              # CONFIRMED crit = 2x damage
+CRIT_RATE = 0.42           # ~from packet log (refine with a longer clean capture)
+
+HP = {6232: 306000, 6233: 306000}     # CORRECTED: both ~306k (fitted from dmg + HP% drops)
 NAME = {6232: "Bouncing Jelly", 6233: "Ice Golem"}
 COLOR = {6232: (90, 200, 255), 6233: (170, 95, 225)}
-ATTACK_RANGE = {6232: 1, 6233: 2}      # TABLE-BASELINE basicRange
-PLAYER_ATTACK_RANGE = 3                # your skill reach (approx; tune vs game)
-MOB_STEP_MS = 600          # how often an aggroed mob steps (rough; tune)
-MOB_ATTACK_MS = 1000       # how often a mob hits you when adjacent (TODO measure)
-PLAYER_CD_MS = 700         # your basic-skill cooldown (rough; tune)
+ATTACK_RANGE = {6232: 1, 6233: 2}      # mob basic range (table baseline; verify)
+MOB_STEP_MS = 600          # mob chase-step cadence — NOT yet cleanly measured (tune)
+MOB_ATTACK_MS = 1000       # mob attack cadence when in range — NOT yet measured (tune)
 
 CELL = 6                   # pixels per tile
 HUD_H = 96
@@ -87,6 +98,7 @@ class VizWorld:
         self.php = PLAYER_HP_MAX
         self.mobs = [Mob(v, x, y) for (v, x, y) in M.SPAWNS]
         self.last_cast = -99999
+        self.last_strike = None
         self.log = ["reset — clear the map!"]
 
     def _nearest_walkable(self, x, y):
@@ -108,24 +120,32 @@ class VizWorld:
     def attack(self, now):
         if now - self.last_cast < PLAYER_CD_MS:
             return
-        # nearest alive mob within player range
+        # 1) TARGET = nearest alive mob within targeting range (Chebyshev).
+        #    (the RL agent will later choose this target; "nearest in range" is the
+        #     simple default for manual validation.)
         target = None
         best = 999
         for m in self.alive_mobs():
             d = chebyshev((self.px, self.py), (m.x, m.y))
-            if d <= PLAYER_ATTACK_RANGE and d < best:
+            if d <= TARGET_RANGE and d < best:
                 best, target = d, m
-        if not target:
+        if target is None:
             return
         self.last_cast = now
-        dmg = random.randint(*PLAYER_DMG)
-        target.hp -= dmg
-        if target.hp <= 0:
-            target.alive = False
-            self.log.append(f"killed {NAME[target.vnum]} (hit {dmg})")
-        else:
-            pct = int(target.hp / target.hp_max * 100)
-            self.log.append(f"hit {NAME[target.vnum]} {dmg} -> {pct}%")
+        # 2) AoE blast: every alive mob within AOE_RADIUS (Chebyshev) of the TARGET
+        #    takes damage. Crit (x2) is rolled independently per target.
+        hit = [m for m in self.alive_mobs()
+               if chebyshev((target.x, target.y), (m.x, m.y)) <= AOE_RADIUS]
+        killed = 0
+        for m in hit:
+            crit = random.random() < CRIT_RATE
+            m.hp -= PLAYER_DMG_BASE[m.vnum] * (CRIT_MULT if crit else 1)
+            if m.hp <= 0:
+                m.alive = False
+                killed += 1
+        # 3) remember the strike centre for the on-screen flash
+        self.last_strike = (target.x, target.y, now)
+        self.log.append(f"cast @({target.x},{target.y})  hit {len(hit)} mob(s), killed {killed}")
         self.log = self.log[-6:]
 
     def update_mobs(self, now):
@@ -210,10 +230,19 @@ def run():
         screen.fill(BG)
         screen.blit(grid_surf, (0, 0))
 
-        # aggro radius ring around player (visual aid)
-        pygame.draw.circle(screen, (60, 70, 90),
-                           (w.px * CELL + CELL // 2, w.py * CELL + CELL // 2),
-                           AGGRO * CELL, 1)
+        # Chebyshev neighbourhoods are SQUARES, not circles — draw them as squares.
+        def cheb_box(cx, cy, r, col, width):
+            pygame.draw.rect(screen, col,
+                             ((cx - r) * CELL, (cy - r) * CELL,
+                              (2 * r + 1) * CELL, (2 * r + 1) * CELL), width)
+        # aggro range (mobs within this start chasing) and targeting range (your reach)
+        cheb_box(w.px, w.py, AGGRO, (55, 62, 80), 1)
+        cheb_box(w.px, w.py, TARGET_RANGE, (95, 85, 55), 1)
+        # last attack: flash the AoE box (5x5) centred on the TARGET
+        if w.last_strike is not None:
+            tx, ty, tt = w.last_strike
+            if now - tt < 220:
+                cheb_box(tx, ty, AOE_RADIUS, (255, 205, 80), 2)
 
         for m in w.mobs:
             if not m.alive:
@@ -246,14 +275,14 @@ def run():
         pygame.draw.rect(screen, (220, 70, 70), (10, hud_y + 10, int(240 * hpfr), 16))
         screen.blit(font.render(f"HP {w.php}/{PLAYER_HP_MAX}", True, (255, 255, 255)), (14, hud_y + 11))
         cd_left = max(0, PLAYER_CD_MS - (now - w.last_cast))
-        screen.blit(font.render(f"pos ({w.px},{w.py})   attack CD {cd_left}ms", True, (200, 200, 210)), (260, hud_y + 11))
+        screen.blit(font.render(f"pos ({w.px},{w.py})   attack CD {cd_left}ms   range {TARGET_RANGE} / AoE {2*AOE_RADIUS+1}x{2*AOE_RADIUS+1}", True, (200, 200, 210)), (260, hud_y + 11))
         screen.blit(bigfont.render(f"mobs left: {alive}   (Jelly {jelly} / Golem {golem})", True, (255, 230, 120)), (10, hud_y + 34))
         # event log
         for i, line in enumerate(w.log[-3:]):
             screen.blit(font.render(line, True, (170, 200, 170)), (10, hud_y + 56 + i * 13))
         # controls hint
-        screen.blit(font.render("WASD/arrows move | SPACE attack | R reset | ESC quit",
-                                True, (120, 130, 140)), (W - 430, hud_y + 11))
+        screen.blit(font.render("WASD/arrows move | SPACE attack (targeted AoE) | R reset | ESC quit",
+                                True, (120, 130, 140)), (W - 470, hud_y + 11))
 
         pygame.display.flip()
         clock.tick(60)
