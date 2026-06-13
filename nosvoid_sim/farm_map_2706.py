@@ -1,83 +1,152 @@
 """
 Farm map 2706 — concrete, LIVE-VERIFIED data for the Phase-1 simulator.
 
-All values captured live on NosVoid 2026-06-12 (PID 6020) and cross-checked
-against the running game. Each field is tagged with how trustworthy it is:
+Values captured live on NosVoid and cross-checked against the running game.
+Each field is tagged with how trustworthy it is:
 
   CONFIRMED      = live-verified against the game (highest confidence)
   FITTED         = computed from logged `su` damage + HP% drops
+  MEASURED-S21   = directly measured live in Session 21 (CE pos+HP% poll / packet log)
   TABLE-WRONG    = the client NpcDataEntry value is FALSE (server overrides it)
   TABLE-BASELINE = read from NpcDataEntry, plausibly NosVoid-actual but NOT
                    independently confirmed — treat as a hint, verify later
 
 KEY LESSON (do not forget): the client static table is a MIX of real and stale
-values. noticeRange=12 and Golem HP=345000 proved NosVoid-actual; Jelly HP=250
-proved FALSE (real ≈ 300000). So HP especially must be FITTED, never trusted
-from the table.
+values, and so were some earlier *fits*. Session 21 corrected TWO things:
+  * Golem HP is NOT 345000. BOTH mobs are ~306000 HP (fitted from exact `su`
+    damage + HP% drops). The mobs differ by DAMAGE TAKEN (defence), not HP.
+  * The autoattack is a TARGET-centred AoE, not single-target, and its CD is
+    0.7s (su Token[5]=7) — the old skillslot+0x20=10 was a RED HERRING.
+So HP and combat mechanics must be MEASURED, never trusted from the table.
 """
 
 from __future__ import annotations
 from .mob_behavior import MobProfile
+from .cooldown import SkillDef
 
 MAP_ID = 2706
 MAP_W, MAP_H = 180, 130            # CONFIRMED (grid render matched minimap)
-MOB_COUNT = 90                     # CONFIRMED (45 + 45)
-
-# Damage the player currently deals (THIS build/SP/gear), from captured `su` Token[12].
-# Varies per hit (~98k vs ~197k) — likely crit vs non-crit / skill variant. Range kept.
-PLAYER_HIT_MIN = 98000             # CONFIRMED (observed 98354 / 98589 / 101468)
-PLAYER_HIT_MAX = 197000            # CONFIRMED (observed 197098)
+MOB_COUNT = 90                     # CONFIRMED (45 Jelly + 45 Golem; live list count = 90)
 PLAYER_HP_MAX = 54754              # CONFIRMED (matches HUD)
+PLAYER_WALK_SPEED = 15             # CONFIRMED (cond Token[4]); tps mapping TODO
 
-# Two mob types, 45 each. Profiles below.
+# ---------------------------------------------------------------------------
+# AUTOATTACK = "Magma Ball" (Red Magician, fire). TARGET-centred AoE.   [S21]
+# You attack a TARGET within TARGET_RANGE_TILES; the blast damages every mob
+# within AOE_RADIUS_TILES (Chebyshev) of the TARGET — NOT of the player.
+# Measured live: 0/17 "disk-around-target" violations; up to 28 mobs per cast.
+# ---------------------------------------------------------------------------
+TARGET_RANGE_TILES = 9             # MEASURED-S21 (SkillDataEntry range=9; targeting reach)
+AOE_RADIUS_TILES   = 2             # MEASURED-S21 (Chebyshev radius around target = 5x5)
+PLAYER_CD_MS       = 700           # MEASURED-S21 (su Token[5]=7). slot+0x20=10 was a RED HERRING.
+CAST_MS            = 654           # MEASURED-S21 (ct->su gap). Effective cycle ~max(CD,cast)=700.
+
+CRIT_MULTIPLIER = 2.0              # MEASURED-S21 (crit = x2)
+CRIT_RATE       = 0.42             # MEASURED-S21 (small sample — refine with a longer clean capture)
+
+# Packet skill id of the autoattack is 1078 (and -1 for repeats); 6022 is the
+# CLIENT skill-bar slot vnum. Identity comes from the packet, not the slot.
+AUTOATTACK = SkillDef(
+    vnum=1078,                     # packet skill id (client slot shows 6022)
+    name="Magma Ball",
+    is_damage=True,
+    cast_type=0,
+    mp_cost=50,                    # TABLE-BASELINE (+0x48)
+    cooldown_ms=PLAYER_CD_MS,      # MEASURED-S21
+    range_tiles=TARGET_RANGE_TILES,
+    aoe_radius=AOE_RADIUS_TILES,
+    cast_time_ms=CAST_MS,          # MEASURED-S21
+)
+
+# DEPRECATED (pre-S21): a single global player-hit range conflated both mob
+# types AND crit-vs-noncrit. Superseded by per-mob `player_dmg_base` (non-crit)
+# + CRIT_MULTIPLIER below. Kept only so old references don't break.
+PLAYER_HIT_MIN = 52000
+PLAYER_HIT_MAX = 202000
+
+# Two mob types, 45 each.
 PROFILES: dict[int, MobProfile] = {
     6232: MobProfile(
         vnum=6232,
         name="Ice Biome Bouncing Jelly",   # CONFIRMED (NpcDataEntry +0x4)
-        hp_max=300000,                      # FITTED (~307k & ~299k from two hits; TABLE said 250 = WRONG)
+        hp_max=306000,                      # FITTED-S21 (~306k; old 300k close, table 250 = WRONG)
         aggro_radius=12,                    # CONFIRMED (started chase at exactly dist 12)
         leash_radius=0,                     # TODO observe (not yet measured)
-        move_speed_tps=0.0,                 # TODO observe (table speed=6, unconfirmed)
+        move_speed_tps=0.0,                 # TODO observe (table speed=6; mv token ~29, needs scaling)
         attack_range=1,                     # TABLE-BASELINE (basicRange=1, melee)
-        attack_cadence_ms=0,                # TODO observe
+        attack_cadence_ms=0,                # TODO observe (roaming sample ~4.6s, too noisy)
         incoming_damage_min=465,            # CONFIRMED (su Token[12] mob->player = 465; 0 = miss)
         incoming_damage_max=465,            # CONFIRMED (constant 465 observed)
+        player_dmg_base=101000,             # MEASURED-S21 (non-crit; ~101k. crit ~202k)
         respawn_ms=600_000,                 # TABLE-BASELINE (respawn=600 = 10 min; not yet confirmed)
-        fitted=True,                        # core combat fields are real-data-backed
+        fitted=True,
     ),
     6233: MobProfile(
         vnum=6233,
         name="Ice Biome Ice Golem",         # CONFIRMED
-        hp_max=345000,                      # CONFIRMED (table value cross-checked via hits-to-kill)
+        hp_max=306000,                      # FITTED-S21 (~306k; NOT 345k — that was wrong)
         aggro_radius=12,                    # CONFIRMED (chase began at dist 12)
         leash_radius=0,                     # TODO observe
-        move_speed_tps=0.0,                 # TODO observe (table speed=10; chase ~3-5 tiles/0.6s rough)
+        move_speed_tps=0.0,                 # TODO observe (table speed=10)
         attack_range=2,                     # TABLE-BASELINE (basicRange=2)
         attack_cadence_ms=0,                # TODO observe
         incoming_damage_min=465,            # CONFIRMED (mob->player 465)
         incoming_damage_max=465,            # CONFIRMED
+        player_dmg_base=52000,              # MEASURED-S21 (non-crit; ~52k. crit ~104k -> ~2x Jelly's hits)
         respawn_ms=600_000,                 # TABLE-BASELINE
         fitted=True,
     ),
 }
 
+# NOTE on the two mobs: SAME HP (~306k), DIFFERENT damage taken. Jelly takes
+# ~101k/hit, Golem ~52k/hit -> Golem needs ~2x the hits to kill. The difference
+# is defence/resistance, NOT HP. `player_dmg_base` is the measured, identifiable
+# combination; do not split it back into a fake "defence" number.
+
 # Other NpcDataEntry fields (TABLE-BASELINE — hints, not confirmed NosVoid-actual):
-#   6232: level 92, element 2(water), closeDef 112, distDef 0, damageMax 47,
-#         speed 6, defDodge 40, basicSkill 654, concentrate 1
-#   6233: level 97, element 2(water), closeDef 950, distDef 500, damageMax 700,
-#         speed 10, defDodge 200, basicSkill 3108, concentrate 97
-# NOTE: damageMax (47/700) does NOT match observed incoming damage (465 for both),
-#       so damageMax is NOT the incoming-damage number directly — another reason to
-#       trust observed `su` damage over table fields.
+#   6232: level 92, element 2(water), closeDef 112, distDef 0, speed 6
+#   6233: level 97, element 2(water), closeDef 950, distDef 500, speed 10
+# Both mobs are water/ice element; the autoattack is fire (Magma Ball / Red Mage).
+# Element matchup likely contributes to the high damage, but the MEASURED per-hit
+# values already bake it in -> they are valid for THIS build only (re-measure if
+# SP / gear / element change). Map 2706 = "Ice Dungeon" (ice zone).
 
-# Element: both are water (element=2). Player attack-element vs water sets the
-# damage attribute_factor — element matchup table still an OPEN ITEM.
-
-# su packet token layout (CONFIRMED live with reference target):
+# su packet token layout (CONFIRMED live):
 #   su [0]atkType [1]atkID [2]tgtType [3]tgtID(server id, != entity+0x00)
-#      [4]skillVNUM [5]cooldown [6]? [7]const(4523 player/4806 mob)
-#      [8]posX [9]posY [10]? [11]targetHP%_after [12]DAMAGE [13]hitFlag [14]?
+#      [4]skillVNUM(1078/-1) [5]cooldown(1/10s) [6]? [7]anim
+#      [8]posX [9]posY [10]alive [11]targetHP%_after [12]DAMAGE [13]hitFlag(5=crit?) [14]?
 SU_TOKEN_DAMAGE = 12
 SU_TOKEN_HP_PCT_AFTER = 11
-SU_TOKEN_POS_X = 8
-SU_TOKEN_POS_Y = 9
+SU_TOKEN_ALIVE = 10
+SU_TOKEN_COOLDOWN = 5
+SU_TOKEN_HITFLAG = 13
+
+
+def build_world(seed_eid: int = 1):
+    """
+    Construct a ready-to-run World for map 2706 from the live-extracted grid +
+    spawns (`_map2706_data`) with the AUTOATTACK skill, mob profiles and the
+    measured crit params wired in. Lazy imports avoid any module load-order cycle.
+    """
+    from .engine import World
+    from .entity import Entity, EntityKind
+    from .grid import Grid
+    from . import _map2706_data as M
+
+    grid = Grid.from_rle(M.MAP_W, M.MAP_H, M.GRID_RLE)
+    px, py = M.PLAYER_START
+    player = Entity(eid=0, kind=EntityKind.PLAYER, vnum=0, x=px, y=py,
+                    hp=PLAYER_HP_MAX, hp_max=PLAYER_HP_MAX, level=99)
+    mobs: list[Entity] = []
+    eid = seed_eid
+    for (vnum, x, y) in M.SPAWNS:
+        prof = PROFILES[vnum]
+        mobs.append(Entity(eid=eid, kind=EntityKind.MONSTER, vnum=vnum, x=x, y=y,
+                           hp=prof.hp_max, hp_max=prof.hp_max))
+        eid += 1
+    return World(
+        grid=grid, player=player, mobs=mobs,
+        skills={AUTOATTACK.vnum: AUTOATTACK},
+        profiles=PROFILES,
+        crit_rate=CRIT_RATE, crit_mult=CRIT_MULTIPLIER,
+    )

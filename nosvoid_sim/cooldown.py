@@ -27,6 +27,13 @@ GROUND TRUTH (live-verified 2026-06-12, Session 20 — corrected from March note
   (e.g. Power of the Volcano: 30s CD, ~5min effect duration). Duration is read
   from the buff slot widget, not the skill slot.
 
+  ** SESSION 21 caveat: for the basic AUTOATTACK, the client does NOT track its
+  CD in skillslot+0x20 (it stayed 0/10 through a real cast — RED HERRING). The
+  authoritative autoattack CD is the `su` packet Token[5] (1/10 s) = 0.7 s, and
+  cast/animation time ≈ 654 ms (ct->su gap). Use packet-sourced CD for the
+  autoattack; +0x20 is reliable only for the longer SP/utility skills it was
+  verified on. **
+
 In the simulator we model game time in milliseconds directly; no raw clock
 address. The mechanism (CD set on use, computed against a monotonic clock) is
 what we replicate.
@@ -47,8 +54,9 @@ class SkillDef:
     cooldown_ms: int          # base cooldown (from +0xFC * 100)
     range_tiles: int
     aoe_radius: int
-    # cast/animation time before damage lands. NOT yet live-verified (open item).
-    # placeholder; fill from live measurement.
+    # cast/animation time before damage lands. MEASURED-S21 for the autoattack
+    # ("Magma Ball") ≈ 654 ms (ct->su gap). Default stays 0; set per skill
+    # instance (see farm_map_2706.AUTOATTACK).
     cast_time_ms: int = 0
 
 

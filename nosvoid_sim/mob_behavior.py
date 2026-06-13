@@ -43,6 +43,11 @@ class MobProfile:
     attack_cadence_ms: int = 0
     incoming_damage_min: int = 0
     incoming_damage_max: int = 0
+    # SESSION 21: player's NON-CRIT hit ON this mob. This is the identifiable
+    # (player_atk - mob_def + level-diff) COMBINATION measured from `su` Token[12],
+    # NOT a pure defence value (defence and level are not separately identifiable
+    # from damage alone). Crit = x2 of this. Build-specific (SP/gear/element).
+    player_dmg_base: int = 0
     respawn_ms: int = 0
     spawn_x: int = 0             # leash anchor / spawn point
     spawn_y: int = 0
