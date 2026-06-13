@@ -1,0 +1,48 @@
+{
+  "aggro_radius_tiles": null,
+  "idle_step_rate_per_s": 2.86,
+  "idle_wander_radius": {
+    "n": 90,
+    "med": 17.0,
+    "mean": 16.99,
+    "p10": 13.45,
+    "p90": 21.19,
+    "max": 24.76
+  },
+  "chase_episodes": 189,
+  "chase_dur_ms": {
+    "n": 189,
+    "med": 31344,
+    "mean": 37651.15,
+    "p10": 9219,
+    "p90": 83344,
+    "max": 96984
+  },
+  "chase_dmin_tiles": {
+    "n": 189,
+    "med": 0.0,
+    "mean": 0.65,
+    "p10": 0.0,
+    "p90": 1.0,
+    "max": 11.18
+  },
+  "mob_speed_tiles_s": {
+    "n": 189,
+    "med": 6.38,
+    "mean": 6.21,
+    "p10": 4.61,
+    "p90": 7.31,
+    "max": 9.83
+  },
+  "player_speed_tiles_s": {
+    "n": 189,
+    "med": 5.37,
+    "mean": 5.04,
+    "p10": 4.08,
+    "p90": 5.81,
+    "max": 6.02
+  },
+  "max_simultaneous_chasers": 88,
+  "max_within_aggro12": 90,
+  "max_within_melee2": 77
+}

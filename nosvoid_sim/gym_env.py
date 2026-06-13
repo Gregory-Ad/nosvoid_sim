@@ -1,4 +1,4 @@
-"""
+﻿"""
 Phase-2 scaffold: a Gymnasium-style environment for the "clear the farm map as
 fast as possible" task, wrapping the validated Phase-1 simulator.
 
@@ -87,9 +87,9 @@ OBS_DIM = len(OBS_LABELS)
 
 @dataclass
 class EnvConfig:
-    # --- UNMEASURED timings (PLACEHOLDERS — measure live next) ---
-    player_step_ms: int = 150          # time to walk one tile (tie to walk speed 15 later)
-    mob_step_ms: int = 600             # mob chase-step cadence (placeholder)
+    # --- UNMEASURED timings (PLACEHOLDERS â€” measure live next) ---
+    player_step_ms: int = 185          # time to walk one tile (tie to walk speed 15 later)
+    mob_step_ms: int = 157             # mob chase-step cadence (placeholder)
     mob_attack_ms: int = 1000          # mob attack cadence when in range (placeholder)
     leash_radius: int = 0              # 0 = no leash / chase forever (placeholder)
     sub_dt_ms: int = 100               # fine sub-step granularity for the mob sim
@@ -100,7 +100,12 @@ class EnvConfig:
     death_penalty: float = 50.0        # terminal penalty for dying
     max_steps: int = 6000              # truncation
     # scripted-baseline knobs (also handy defaults for envs)
-    kite_hp_frac: float = 0.35         # below this HP, kite away from adjacent mobs
+    kite_hp_frac: float = 0.35
+    # --- MEASURED-S22 mob dynamics (telemetry map 2706) ---
+    mob_idle_step_ms: int = 350        # idle wander ~1 tile/350ms (~2.9 t/s), radius ~17 from spawn
+    respawn_delay_s: int = 45          # ~45s after wipe mobs respawn (rough,1 sample); same ids reused
+    heal_to_full_hp: bool = True       # potion heals to 100% -> survival is potion-bound, not kiting
+    potion_cooldown_ms: int = 0        # UNMEASURED placeholder (need potion throughput)         # below this HP, kite away from adjacent mobs
 
 
 class FarmClearEnv(gym.Env):

@@ -1,0 +1,46 @@
+{
+  "idle_speed_tiles_s_moving": 11.08,
+  "idle_still_fraction": 0.726,
+  "wander_radius_tiles": {
+    "n": 90,
+    "med": 16.99,
+    "mean": 16.94,
+    "p10": 13.45,
+    "p90": 21.19,
+    "max": 24.76
+  },
+  "aggro_trigger_dist_tiles": {
+    "n": 6919,
+    "med": 46.57,
+    "mean": 52.21,
+    "p10": 4.12,
+    "p90": 122.1,
+    "max": 164.2
+  },
+  "chase_speed_tiles_s": {
+    "n": 6,
+    "med": 7.93,
+    "mean": 7.84,
+    "p10": 7.05,
+    "p90": 8.27,
+    "max": 8.37
+  },
+  "max_simultaneous_pursuers": 85,
+  "pursuit_episodes": 6917,
+  "pursuit_path_walkable": [
+    432,
+    432
+  ],
+  "chord_blocked_frames": 0,
+  "leash_dist_when_stopped_tiles": {
+    "n": 4397,
+    "med": 30.02,
+    "mean": 45.01,
+    "p10": 3.61,
+    "p90": 115.38,
+    "max": 151.35
+  },
+  "notes": "n=in-view not alive; player never targeted; speeds episode-averaged.",
+  "suggest_mob_step_ms_chase": 126,
+  "suggest_mob_step_ms_idle": 90
+}
