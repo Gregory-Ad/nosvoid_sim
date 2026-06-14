@@ -39,7 +39,9 @@ PLAYER_WALK_SPEED = 15             # CONFIRMED (cond Token[4]); tps mapping TODO
 TARGET_RANGE_TILES = 9             # MEASURED-S21 (SkillDataEntry range=9; targeting reach)
 AOE_RADIUS_TILES   = 2             # MEASURED-S21 (Chebyshev radius around target = 5x5)
 PLAYER_CD_MS       = 700           # MEASURED-S21 (su Token[5]=7). slot+0x20=10 was a RED HERRING.
-CAST_MS            = 654           # MEASURED-S21 (ct->su gap). Effective cycle ~max(CD,cast)=700.
+CAST_MS            = 600           # MEASURED-S27 (ct->su, combat-capture median ~580-600). ROOTED: player cannot move during cast.
+RECAST_CYCLE_MS    = 1356          # MEASURED-S27 (ct->sr full cycle = cast + CD). Next cast ready this long after cast START.
+                                   # So per attack: ~600ms rooted cast + ~756ms free-move before recast. Verified: 0/49 casts moved mid-cast.
 
 CRIT_MULTIPLIER = 2.0              # MEASURED-S21 (crit = x2)
 CRIT_RATE       = 0.65             # MEASURED-S24 (871-su sample; BUILD-DEPENDENT — S21 was 0.42)
@@ -53,10 +55,10 @@ AUTOATTACK = SkillDef(
     is_damage=True,
     cast_type=0,
     mp_cost=50,                    # TABLE-BASELINE (+0x48)
-    cooldown_ms=PLAYER_CD_MS,      # MEASURED-S21
+    cooldown_ms=RECAST_CYCLE_MS,   # S27: recast interval from CAST START (cast+CD), ct->sr ~1356ms
     range_tiles=TARGET_RANGE_TILES,
     aoe_radius=AOE_RADIUS_TILES,
-    cast_time_ms=CAST_MS,          # MEASURED-S21
+    cast_time_ms=CAST_MS,          # S27: ROOTED cast window (ct->su ~600ms); move + cast are mutually exclusive
 )
 
 # DEPRECATED (pre-S21): a single global player-hit range conflated both mob

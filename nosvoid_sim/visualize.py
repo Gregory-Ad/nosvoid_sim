@@ -18,7 +18,7 @@ WHAT'S MODELLED (LIVE-VERIFIED — packet log + Cheat Engine memory reads):
     the blast hits EVERY mob within 2 tiles (Chebyshev, 5x5) of that TARGET — not of you
   - per-mob damage: Jelly ~101k, Golem ~52k (Golem has higher defence); crit = x2, per target
   - mob HP: BOTH ~306k (Golem is NOT 345k; it just takes ~half damage -> ~2x hits)
-  - cooldown 0.7s, cast/animation ~0.65s; mob damage to you 465/hit; your HP 54754
+  - recast cycle ~1.36s (cast ~0.6s ROOTED + CD; move+cast mutually exclusive); mob damage 465/hit; your HP 54754
   - aggro radius ~12 tiles (Chebyshev) [S26]: mob chases within ~12; DISTANCE-ONLY (through walls, not LOS-gated); prompt (~1s)
   - MOB MOVEMENT (Session 22, HIGH): idle = slow wander near spawn (~1 tile/350ms, ~73%
     idle, radius ~17); chase = ~157 ms/tile (~6.4 t/s), i.e. ~2.2x faster on aggro. Mobs
@@ -61,8 +61,10 @@ MOB_HIT_CHANCE = 0.53      # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg th
 # the blast hits every mob within AOE_RADIUS of the TARGET (NOT of you).  [measured live]
 TARGET_RANGE = 9           # targeting/cast reach in tiles (Chebyshev) — SkillDataEntry range
 AOE_RADIUS   = 2           # blast radius around the TARGET (Chebyshev = 5x5)  [measured ~2]
-PLAYER_CD_MS = 700         # CONFIRMED cooldown (su token[5]=7)
-CAST_MS      = 654         # CONFIRMED cast/animation (ct->su); effective cycle ~max(CD,cast)
+PLAYER_CD_MS = 700         # CONFIRMED bare cooldown (su token[5]=7) — kept for reference
+CAST_MS      = 600         # MEASURED-S27 cast/animation (ct->su ~580-600). ROOTED: no movement during cast.
+RECAST_CYCLE_MS = 1356     # MEASURED-S27 full recast cycle (ct->sr = cast + CD). Next cast this long after cast START.
+                           #   => per attack: ~600ms rooted cast + ~756ms free-move. Verified 0/49 casts moved mid-cast.
 PLAYER_STEP_MS = 185       # walk cadence ~5.4 t/s (gym_env player_step_ms). Mob chase ~6.4 t/s
                            #   is FASTER -> you can't out-walk mobs (survival is potion-bound).
 
@@ -127,7 +129,9 @@ class VizWorld:
             self.px, self.py = self._nearest_walkable(self.px, self.py)
         self.php = PLAYER_HP_MAX
         self.mobs = [Mob(v, x, y) for (v, x, y) in M.SPAWNS]
-        self.last_cast = -99999
+        self.cast_end = -99999      # player ROOTED until this time (cast in progress)
+        self.cd_ready = -99999      # next cast allowed at/after this time (recast cycle)
+        self.pending  = None        # target locked during the in-flight cast; damage lands at cast_end
         self.last_strike = None
         self.log = ["reset — clear the map!"]
 
@@ -148,7 +152,8 @@ class VizWorld:
             self.px, self.py = nx, ny
 
     def attack(self, now):
-        if now - self.last_cast < PLAYER_CD_MS:
+        # A cast may start only when: not already casting AND the recast cycle has elapsed.
+        if now < self.cast_end or now < self.cd_ready:
             return
         # 1) TARGET = nearest alive mob within targeting range (Chebyshev).
         #    (the RL agent will later choose this target; "nearest in range" is the
@@ -161,11 +166,27 @@ class VizWorld:
                 best, target = d, m
         if target is None:
             return
-        self.last_cast = now
-        # 2) AoE blast: every alive mob within AOE_RADIUS (Chebyshev) of the TARGET
-        #    takes damage. Crit (x2) is rolled independently per target.
+        # 2) START the cast. The player is ROOTED until cast_end (movement blocked in the
+        #    main loop) and cannot recast until cd_ready. Damage does NOT land now — it lands
+        #    in resolve_cast() when the rooted cast completes (target-locked AoE).
+        self.cast_end = now + CAST_MS
+        self.cd_ready = now + RECAST_CYCLE_MS
+        self.pending  = target
+        self.log.append(f"cast START -> ({target.x},{target.y})  rooted {CAST_MS}ms")
+        self.log = self.log[-6:]
+
+    def resolve_cast(self, now):
+        # Land the AoE the instant the rooted cast finishes. Target-locked: centred on the
+        # target's position at resolve (Magma Ball follows its locked target).
+        if self.pending is None or now < self.cast_end:
+            return
+        target = self.pending
+        self.pending = None
+        cx, cy = target.x, target.y
+        # AoE blast: every alive mob within AOE_RADIUS (Chebyshev) of the TARGET takes
+        # damage. Crit (x2) is rolled independently per mob.
         hit = [m for m in self.alive_mobs()
-               if chebyshev((target.x, target.y), (m.x, m.y)) <= AOE_RADIUS]
+               if chebyshev((cx, cy), (m.x, m.y)) <= AOE_RADIUS]
         killed = 0
         for m in hit:
             crit = random.random() < CRIT_RATE
@@ -174,9 +195,9 @@ class VizWorld:
                 m.alive = False
                 m.dead_at = now
                 killed += 1
-        # 3) remember the strike centre for the on-screen flash
-        self.last_strike = (target.x, target.y, now)
-        self.log.append(f"cast @({target.x},{target.y})  hit {len(hit)} mob(s), killed {killed}")
+        # remember the strike centre for the on-screen flash
+        self.last_strike = (cx, cy, now)
+        self.log.append(f"cast LAND  @({cx},{cy})  hit {len(hit)} mob(s), killed {killed}")
         self.log = self.log[-6:]
 
     def update_mobs(self, now):
@@ -264,9 +285,13 @@ def run():
                 elif e.key == pygame.K_SPACE:
                     w.attack(now)
 
-        # held movement keys (repeat with a small cooldown)
+        # land any in-flight cast the moment its rooted window ends
+        w.resolve_cast(now)
+
+        # held movement keys (repeat with a small cooldown) — BLOCKED while casting (rooted).
+        # Move and cast are mutually exclusive: you cannot run while a cast is in progress.
         keys = pygame.key.get_pressed()
-        if now - move_cd > PLAYER_STEP_MS:
+        if now >= w.cast_end and now - move_cd > PLAYER_STEP_MS:
             dx = dy = 0
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:  dx = -1
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = 1
@@ -326,8 +351,12 @@ def run():
         pygame.draw.rect(screen, (60, 30, 30), (10, hud_y + 10, 240, 16))
         pygame.draw.rect(screen, (220, 70, 70), (10, hud_y + 10, int(240 * hpfr), 16))
         screen.blit(font.render(f"HP {w.php}/{PLAYER_HP_MAX}", True, (255, 255, 255)), (14, hud_y + 11))
-        cd_left = max(0, PLAYER_CD_MS - (now - w.last_cast))
-        screen.blit(font.render(f"pos ({w.px},{w.py})   attack CD {cd_left}ms   range {TARGET_RANGE} / AoE {2*AOE_RADIUS+1}x{2*AOE_RADIUS+1}", True, (200, 200, 210)), (260, hud_y + 11))
+        if now < w.cast_end:
+            atk_state = f"CASTING {w.cast_end - now}ms (rooted)"
+        else:
+            cd_left = max(0, w.cd_ready - now)
+            atk_state = "READY" if cd_left == 0 else f"recast {cd_left}ms"
+        screen.blit(font.render(f"pos ({w.px},{w.py})   atk {atk_state}   range {TARGET_RANGE} / AoE {2*AOE_RADIUS+1}x{2*AOE_RADIUS+1}", True, (200, 200, 210)), (260, hud_y + 11))
         screen.blit(bigfont.render(f"mobs left: {alive}   (Jelly {jelly} / Golem {golem})", True, (255, 230, 120)), (10, hud_y + 34))
         # event log
         for i, line in enumerate(w.log[-3:]):

@@ -17,7 +17,7 @@ DESIGN (per the review):
 WHAT IS MEASURED vs PLACEHOLDER (be honest):
   MEASURED (authoritative, from Session 21 / farm_map_2706):
     - autoattack = TARGET-centred AoE, range 9, radius 2 (Chebyshev, 5x5)
-    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.65 [S24]
+    - recast ~1.36 s [S27] (cast ~0.6 s ROOTED + CD; move+cast mutually exclusive), per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.65 [S24]
     - both mobs 307705 HP, incoming 465/hit @ 53% (cadence ~3.5-4s), player 54754 HP, aggro 12
   PLACEHOLDER (flagged; the load-bearing unknowns for the positioning problem):
     - player_step_ms (move cadence), mob_step_ms (chase), mob_attack_ms, leash
@@ -158,6 +158,11 @@ class FarmClearEnv(gym.Env):
                 out = self.sim.cast(aa.vnum, tgt)
                 if out:
                     killed = out["killed"]
+                    # S27: the cast ROOTS the player for cast_time_ms — advance time with the
+                    # player stationary while mobs keep chasing/attacking. Move + cast are
+                    # mutually exclusive (verified: 0/49 casts had any player-mv mid-cast).
+                    if aa.cast_time_ms > 0:
+                        self._advance(aa.cast_time_ms); dt += aa.cast_time_ms
             if dt == 0:
                 # ready + (maybe) no target: spend a minimum slice to guarantee progress
                 self._advance(self.cfg.sub_dt_ms); dt += self.cfg.sub_dt_ms

@@ -107,13 +107,13 @@ def test_farm_2706_profiles_loaded():
 
 
 def test_autoattack_skill_params():
-    # SESSION 21: targeted AoE "Magma Ball"; CD 0.7s, cast 0.654s, range 9, AoE r2.
+    # S27: targeted AoE "Magma Ball"; recast cycle 1356ms (cast+CD), ROOTED cast 600ms, range 9, AoE r2.
     from nosvoid_sim import farm
     aa = farm.AUTOATTACK
-    assert aa.cooldown_ms == 700 and aa.cast_time_ms == 654
+    assert aa.cooldown_ms == 1356 and aa.cast_time_ms == 600
     assert aa.range_tiles == 9 and aa.aoe_radius == 2
     assert farm.CRIT_MULTIPLIER == 2.0
-    print("autoattack params OK (CD 700, cast 654, range 9, AoE r2, crit x2)")
+    print("autoattack params OK (recast 1356, rooted cast 600, range 9, AoE r2, crit x2)")
 
 
 def test_targeted_aoe_hits_cluster_not_player():
