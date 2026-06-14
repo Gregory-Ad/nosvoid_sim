@@ -1,0 +1,81 @@
+diff --git a/nosvoid_sim/gym_env.py b/nosvoid_sim/gym_env.py
+index 2bbe98b..a5acb97 100644
+--- a/nosvoid_sim/gym_env.py
++++ b/nosvoid_sim/gym_env.py
+@@ -1,4 +1,4 @@
+-﻿"""
++"""
+ Phase-2 scaffold: a Gymnasium-style environment for the "clear the farm map as
+ fast as possible" task, wrapping the validated Phase-1 simulator.
+ 
+@@ -17,8 +17,8 @@ DESIGN (per the review):
+ WHAT IS MEASURED vs PLACEHOLDER (be honest):
+   MEASURED (authoritative, from Session 21 / farm_map_2706):
+     - autoattack = TARGET-centred AoE, range 9, radius 2 (Chebyshev, 5x5)
+-    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.42
+-    - both mobs ~306k HP, incoming 465/hit, player 54754 HP, aggro 12
++    - recast ~1.36 s [S27] (cast ~0.6 s ROOTED + CD; move+cast mutually exclusive), per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.65 [S24]
++    - both mobs 307705 HP, incoming 465/hit @ 53% (cadence ~3.5-4s), player 54754 HP, aggro 12
+   PLACEHOLDER (flagged; the load-bearing unknowns for the positioning problem):
+     - player_step_ms (move cadence), mob_step_ms (chase), mob_attack_ms, leash
+   => The PLAYER side is faithful; the SURVIVAL/kiting side depends on the
+@@ -90,7 +90,8 @@ class EnvConfig:
+     # --- UNMEASURED timings (PLACEHOLDERS â€” measure live next) ---
+     player_step_ms: int = 185          # time to walk one tile (tie to walk speed 15 later)
+     mob_step_ms: int = 157             # mob chase-step cadence (placeholder)
+-    mob_attack_ms: int = 1000          # mob attack cadence when in range (placeholder)
++    mob_attack_ms: int = 3500          # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss)
++    mob_hit_chance: float = 0.53       # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.
+     leash_radius: int = 0              # 0 = no leash / chase forever (placeholder)
+     sub_dt_ms: int = 100               # fine sub-step granularity for the mob sim
+     # --- reward shaping (objective = clear fastest, stay alive) ---
+@@ -104,8 +105,9 @@ class EnvConfig:
+     # --- MEASURED-S22 mob dynamics (telemetry map 2706) ---
+     mob_idle_step_ms: int = 350        # idle wander ~1 tile/350ms (~2.9 t/s), radius ~17 from spawn
+     respawn_delay_s: int = 45          # ~45s after wipe mobs respawn (rough,1 sample); same ids reused
+-    heal_to_full_hp: bool = True       # potion heals to 100% -> survival is potion-bound, not kiting
+-    potion_cooldown_ms: int = 0        # UNMEASURED placeholder (need potion throughput)         # below this HP, kite away from adjacent mobs
++    heal_to_full_hp: bool = True       # S28: model the human always potting (survival is potion-bound, not kiting)
++    potion_threshold_frac: float = 0.5 # S28: HP below this fraction of max heals INSTANTLY to full (100%)
++    potion_cooldown_ms: int = 0        # UNMEASURED placeholder (no potion-throughput data; instant heal assumed)
+ 
+ 
+ class FarmClearEnv(gym.Env):
+@@ -157,6 +159,11 @@ class FarmClearEnv(gym.Env):
+                 out = self.sim.cast(aa.vnum, tgt)
+                 if out:
+                     killed = out["killed"]
++                    # S27: the cast ROOTS the player for cast_time_ms — advance time with the
++                    # player stationary while mobs keep chasing/attacking. Move + cast are
++                    # mutually exclusive (verified: 0/49 casts had any player-mv mid-cast).
++                    if aa.cast_time_ms > 0:
++                        self._advance(aa.cast_time_ms); dt += aa.cast_time_ms
+             if dt == 0:
+                 # ready + (maybe) no target: spend a minimum slice to guarantee progress
+                 self._advance(self.cfg.sub_dt_ms); dt += self.cfg.sub_dt_ms
+@@ -212,8 +219,15 @@ class FarmClearEnv(gym.Env):
+                 if d <= prof.attack_range:
+                     if now - self._last_atk.get(m.eid, -10**9) >= self.cfg.mob_attack_ms:
+                         self._last_atk[m.eid] = now
+-                        if p.hp is not None:
++                        # MEASURED-S24: mob lands only ~53% of swings (miss => 0 dmg)
++                        if p.hp is not None and random.random() < self.cfg.mob_hit_chance:
+                             p.hp = max(0, p.hp - prof.incoming_damage_max)
++                            # S28: the human always potted — HP below the threshold heals
++                            # instantly to full. Death is effectively off the table (a single
++                            # 465 hit can't cross from >50% to 0), matching real play.
++                            if (self.cfg.heal_to_full_hp and p.hp_max
++                                    and p.hp < self.cfg.potion_threshold_frac * p.hp_max):
++                                p.hp = p.hp_max
+                 else:
+                     if now - self._last_step.get(m.eid, -10**9) >= self.cfg.mob_step_ms:
+                         self._last_step[m.eid] = now
+@@ -289,7 +303,7 @@ class FarmClearEnv(gym.Env):
+         _, nd = self.nearest_mob()
+         n_adj = self.n_adjacent()
+         # incoming threat ~ adjacent mobs * dmg/sec / player max hp, normalised
+-        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max *
++        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max * self.cfg.mob_hit_chance *
+                   (1000.0 / max(1, self.cfg.mob_attack_ms))) / max(1, p.hp_max or 1)
+         feats = [
+             (p.hp or 0) / (p.hp_max or 1),

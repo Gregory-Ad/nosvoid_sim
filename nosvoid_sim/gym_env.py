@@ -1,4 +1,4 @@
-﻿"""
+"""
 Phase-2 scaffold: a Gymnasium-style environment for the "clear the farm map as
 fast as possible" task, wrapping the validated Phase-1 simulator.
 
@@ -105,8 +105,9 @@ class EnvConfig:
     # --- MEASURED-S22 mob dynamics (telemetry map 2706) ---
     mob_idle_step_ms: int = 350        # idle wander ~1 tile/350ms (~2.9 t/s), radius ~17 from spawn
     respawn_delay_s: int = 45          # ~45s after wipe mobs respawn (rough,1 sample); same ids reused
-    heal_to_full_hp: bool = True       # potion heals to 100% -> survival is potion-bound, not kiting
-    potion_cooldown_ms: int = 0        # UNMEASURED placeholder (need potion throughput)         # below this HP, kite away from adjacent mobs
+    heal_to_full_hp: bool = True       # S28: model the human always potting (survival is potion-bound, not kiting)
+    potion_threshold_frac: float = 0.5 # S28: HP below this fraction of max heals INSTANTLY to full (100%)
+    potion_cooldown_ms: int = 0        # UNMEASURED placeholder (no potion-throughput data; instant heal assumed)
 
 
 class FarmClearEnv(gym.Env):
@@ -221,6 +222,12 @@ class FarmClearEnv(gym.Env):
                         # MEASURED-S24: mob lands only ~53% of swings (miss => 0 dmg)
                         if p.hp is not None and random.random() < self.cfg.mob_hit_chance:
                             p.hp = max(0, p.hp - prof.incoming_damage_max)
+                            # S28: the human always potted — HP below the threshold heals
+                            # instantly to full. Death is effectively off the table (a single
+                            # 465 hit can't cross from >50% to 0), matching real play.
+                            if (self.cfg.heal_to_full_hp and p.hp_max
+                                    and p.hp < self.cfg.potion_threshold_frac * p.hp_max):
+                                p.hp = p.hp_max
                 else:
                     if now - self._last_step.get(m.eid, -10**9) >= self.cfg.mob_step_ms:
                         self._last_step[m.eid] = now

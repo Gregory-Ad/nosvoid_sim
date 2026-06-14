@@ -54,6 +54,7 @@ from . import _map2706_data as M
 # ---- tuning (LIVE-VERIFIED: packet log + Cheat Engine memory reads) ----
 AGGRO = 12                 # MEASURED-S26 (~12; distance-only, THROUGH WALLS [user-confirmed], NOT LOS-gated, prompt trigger)
 PLAYER_HP_MAX = 54754      # CONFIRMED
+POTION_THRESHOLD_FRAC = 0.5  # S28: HP below 50% auto-heals to 100% (player always potted -> effectively immortal)
 MOB_DMG = 465              # CONFIRMED incoming dmg per mob hit
 MOB_HIT_CHANCE = 0.53      # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.
 
@@ -234,6 +235,9 @@ class VizWorld:
                     m.last_atk = now
                     if random.random() < MOB_HIT_CHANCE:   # MEASURED-S24: ~53% of swings land
                         self.php = max(0, self.php - MOB_DMG)
+                        # S28: the human always potted — drop below the threshold heals to full.
+                        if self.php < POTION_THRESHOLD_FRAC * PLAYER_HP_MAX:
+                            self.php = PLAYER_HP_MAX
                     if self.php == 0:
                         self.log.append("YOU DIED — press R")
                         self.log = self.log[-6:]
