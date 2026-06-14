@@ -17,8 +17,8 @@ DESIGN (per the review):
 WHAT IS MEASURED vs PLACEHOLDER (be honest):
   MEASURED (authoritative, from Session 21 / farm_map_2706):
     - autoattack = TARGET-centred AoE, range 9, radius 2 (Chebyshev, 5x5)
-    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.42
-    - both mobs ~306k HP, incoming 465/hit, player 54754 HP, aggro 12
+    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.65 [S24]
+    - both mobs 307705 HP, incoming 465/hit @ 53% (cadence ~3.5-4s), player 54754 HP, aggro 12
   PLACEHOLDER (flagged; the load-bearing unknowns for the positioning problem):
     - player_step_ms (move cadence), mob_step_ms (chase), mob_attack_ms, leash
   => The PLAYER side is faithful; the SURVIVAL/kiting side depends on the
@@ -90,7 +90,8 @@ class EnvConfig:
     # --- UNMEASURED timings (PLACEHOLDERS â€” measure live next) ---
     player_step_ms: int = 185          # time to walk one tile (tie to walk speed 15 later)
     mob_step_ms: int = 157             # mob chase-step cadence (placeholder)
-    mob_attack_ms: int = 1000          # mob attack cadence when in range (placeholder)
+    mob_attack_ms: int = 3500          # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss)
+    mob_hit_chance: float = 0.53       # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.
     leash_radius: int = 0              # 0 = no leash / chase forever (placeholder)
     sub_dt_ms: int = 100               # fine sub-step granularity for the mob sim
     # --- reward shaping (objective = clear fastest, stay alive) ---
@@ -212,7 +213,8 @@ class FarmClearEnv(gym.Env):
                 if d <= prof.attack_range:
                     if now - self._last_atk.get(m.eid, -10**9) >= self.cfg.mob_attack_ms:
                         self._last_atk[m.eid] = now
-                        if p.hp is not None:
+                        # MEASURED-S24: mob lands only ~53% of swings (miss => 0 dmg)
+                        if p.hp is not None and random.random() < self.cfg.mob_hit_chance:
                             p.hp = max(0, p.hp - prof.incoming_damage_max)
                 else:
                     if now - self._last_step.get(m.eid, -10**9) >= self.cfg.mob_step_ms:
@@ -289,7 +291,7 @@ class FarmClearEnv(gym.Env):
         _, nd = self.nearest_mob()
         n_adj = self.n_adjacent()
         # incoming threat ~ adjacent mobs * dmg/sec / player max hp, normalised
-        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max *
+        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max * self.cfg.mob_hit_chance *
                   (1000.0 / max(1, self.cfg.mob_attack_ms))) / max(1, p.hp_max or 1)
         feats = [
             (p.hp or 0) / (p.hp_max or 1),

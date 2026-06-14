@@ -94,8 +94,8 @@ def test_farm_2706_profiles_loaded():
     jelly = farm.PROFILES[6232]
     golem = farm.PROFILES[6233]
     assert jelly.aggro_radius == 12 and golem.aggro_radius == 12   # CONFIRMED
-    # SESSION 21: both ~306k HP; the difference between mobs is DAMAGE TAKEN.
-    assert jelly.hp_max == 306000 and golem.hp_max == 306000
+    # S24: both 307705 HP (CONFIRMED via st maxHP); difference between mobs is DAMAGE TAKEN.
+    assert jelly.hp_max == 307705 and golem.hp_max == 307705
     assert jelly.player_dmg_base == 101000                         # MEASURED-S21 (non-crit)
     assert golem.player_dmg_base == 52000                          # MEASURED-S21 (~half -> ~2x hits)
     assert jelly.name == "Ice Biome Bouncing Jelly"

@@ -55,6 +55,7 @@ from . import _map2706_data as M
 AGGRO = 12                 # CONFIRMED tiles (Chebyshev) — mob starts chasing within 12
 PLAYER_HP_MAX = 54754      # CONFIRMED
 MOB_DMG = 465              # CONFIRMED incoming dmg per mob hit
+MOB_HIT_CHANCE = 0.53      # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.
 
 # Autoattack = TARGETED AoE ("Magma Ball"). You attack a target within TARGET_RANGE;
 # the blast hits every mob within AOE_RADIUS of the TARGET (NOT of you).  [measured live]
@@ -68,9 +69,9 @@ PLAYER_STEP_MS = 185       # walk cadence ~5.4 t/s (gym_env player_step_ms). Mob
 # Per-mob damage you deal (base = non-crit); crit = x2, rolled independently per target.
 PLAYER_DMG_BASE = {6232: 101000, 6233: 52000}   # Jelly ~101k / Golem ~52k (Golem higher def)
 CRIT_MULT = 2              # CONFIRMED crit = 2x damage
-CRIT_RATE = 0.42           # ~from packet log (refine with a longer clean capture)
+CRIT_RATE = 0.65           # MEASURED-S24 (871-su sample; BUILD-DEPENDENT — S21 was 0.42)
 
-HP = {6232: 306000, 6233: 306000}     # CORRECTED: both ~306k (fitted from dmg + HP% drops)
+HP = {6232: 307705, 6233: 307705}     # CONFIRMED-S24 (st maxHP=307705; both types)
 NAME = {6232: "Bouncing Jelly", 6233: "Ice Golem"}
 COLOR = {6232: (90, 200, 255), 6233: (170, 95, 225)}
 ATTACK_RANGE = {6232: 1, 6233: 2}      # mob basic range (table baseline; verify)
@@ -81,7 +82,7 @@ IDLE_STEP_MS   = 350       # IDLE-wander tick — MEASURED S22 (~2.9 t/s when ac
 IDLE_MOVE_PROB = 0.27      # chance to step on an idle tick (=> ~73% idle, S22)
 IDLE_RADIUS    = 17        # wander stays within ~17 tiles of spawn (S22)
 
-MOB_ATTACK_MS  = 1000      # ⚠ STILL UNMEASURED. Mob attack cadence in range. S22b/c: read via the
+MOB_ATTACK_MS  = 3500      # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss). Old note: S22b/c read via the
                            #   PACKET sniffer, NOT HP% (misses invisible + potions reset HP%). Guess.
 
 # Respawn is a single low-confidence sample (~45s after a FULL wipe, same ids reused). Left OFF so
@@ -210,7 +211,8 @@ class VizWorld:
                 # in range: attack on cadence (MOB_ATTACK_MS is still a placeholder — see top)
                 if now - m.last_atk >= MOB_ATTACK_MS:
                     m.last_atk = now
-                    self.php = max(0, self.php - MOB_DMG)
+                    if random.random() < MOB_HIT_CHANCE:   # MEASURED-S24: ~53% of swings land
+                        self.php = max(0, self.php - MOB_DMG)
                     if self.php == 0:
                         self.log.append("YOU DIED — press R")
                         self.log = self.log[-6:]

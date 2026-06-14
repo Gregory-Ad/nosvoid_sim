@@ -42,7 +42,8 @@ PLAYER_CD_MS       = 700           # MEASURED-S21 (su Token[5]=7). slot+0x20=10 
 CAST_MS            = 654           # MEASURED-S21 (ct->su gap). Effective cycle ~max(CD,cast)=700.
 
 CRIT_MULTIPLIER = 2.0              # MEASURED-S21 (crit = x2)
-CRIT_RATE       = 0.42             # MEASURED-S21 (small sample — refine with a longer clean capture)
+CRIT_RATE       = 0.65             # MEASURED-S24 (871-su sample; BUILD-DEPENDENT — S21 was 0.42)
+MOB_HIT_RATE    = 0.53             # MEASURED-S24 (273 hit / 242 miss, mob->player). Miss => 0 dmg.
 
 # Packet skill id of the autoattack is 1078 (and -1 for repeats); 6022 is the
 # CLIENT skill-bar slot vnum. Identity comes from the packet, not the slot.
@@ -69,30 +70,30 @@ PROFILES: dict[int, MobProfile] = {
     6232: MobProfile(
         vnum=6232,
         name="Ice Biome Bouncing Jelly",   # CONFIRMED (NpcDataEntry +0x4)
-        hp_max=306000,                      # FITTED-S21 (~306k; old 300k close, table 250 = WRONG)
+        hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; S21 fit ~306k was close)
         aggro_radius=12,                    # CONFIRMED (started chase at exactly dist 12)
         leash_radius=0,                     # TODO observe (not yet measured)
         move_speed_tps=0.0,                 # TODO observe (table speed=6; mv token ~29, needs scaling)
         attack_range=1,                     # TABLE-BASELINE (basicRange=1, melee)
-        attack_cadence_ms=0,                # TODO observe (roaming sample ~4.6s, too noisy)
+        attack_cadence_ms=3500,             # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss)
         incoming_damage_min=465,            # CONFIRMED (su Token[12] mob->player = 465; 0 = miss)
         incoming_damage_max=465,            # CONFIRMED (constant 465 observed)
-        player_dmg_base=101000,             # MEASURED-S21 (non-crit; ~101k. crit ~202k)
+        player_dmg_base=101000,             # CONFIRMED-S24 (non-crit median ~100k; crit ~200k)
         respawn_ms=600_000,                 # TABLE-BASELINE (respawn=600 = 10 min; not yet confirmed)
         fitted=True,
     ),
     6233: MobProfile(
         vnum=6233,
         name="Ice Biome Ice Golem",         # CONFIRMED
-        hp_max=306000,                      # FITTED-S21 (~306k; NOT 345k — that was wrong)
+        hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; NOT 345k)
         aggro_radius=12,                    # CONFIRMED (chase began at dist 12)
         leash_radius=0,                     # TODO observe
         move_speed_tps=0.0,                 # TODO observe (table speed=10)
         attack_range=2,                     # TABLE-BASELINE (basicRange=2)
-        attack_cadence_ms=0,                # TODO observe
+        attack_cadence_ms=3500,             # MEASURED-S24 (same swing ~3.5-4.0s)
         incoming_damage_min=465,            # CONFIRMED (mob->player 465)
         incoming_damage_max=465,            # CONFIRMED
-        player_dmg_base=52000,              # MEASURED-S21 (non-crit; ~52k. crit ~104k -> ~2x Jelly's hits)
+        player_dmg_base=52000,              # CONFIRMED-S24 (non-crit median ~50k; crit ~100k -> ~2x Jelly's hits)
         respawn_ms=600_000,                 # TABLE-BASELINE
         fitted=True,
     ),
@@ -113,8 +114,12 @@ PROFILES: dict[int, MobProfile] = {
 
 # su packet token layout (CONFIRMED live):
 #   su [0]atkType [1]atkID [2]tgtType [3]tgtID(server id, != entity+0x00)
-#      [4]skillVNUM(1078/-1) [5]cooldown(1/10s) [6]? [7]anim
-#      [8]posX [9]posY [10]alive [11]targetHP%_after [12]DAMAGE [13]hitFlag(5=crit?) [14]?
+#      [4]skillVNUM(1078=primary / -1=AoE-splash) [5]cooldown(1/10s) [6]? [7]anim
+#      [8]posX [9]posY [10]alive [11]targetHP%_after [12]DAMAGE [13]hitType [14]?
+#   [13] hitType (CONFIRMED-S24): 4=MISS, 0=direct hit, 5=AoE-splash hit. NOT crit.
+#        Crit is a separate x2 damage bimodality (rate ~0.65), not flagged here.
+#   NosVoid su = 15 fields: NO Hp/MaxHp tail. Target HP only as % (token[11]);
+#        absolute HP via stat(player) / st(target). st: ... curHP curMP maxHP maxMP.
 SU_TOKEN_DAMAGE = 12
 SU_TOKEN_HP_PCT_AFTER = 11
 SU_TOKEN_ALIVE = 10
