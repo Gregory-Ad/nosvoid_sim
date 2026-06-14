@@ -81,9 +81,29 @@ ATTACK_RANGE = {6232: 1, 6233: 2}      # mob basic range (table baseline; verify
 
 # ---- mob movement (Session 22, HIGH confidence unless noted) ----
 MOB_STEP_MS    = 157       # CHASE cadence — MEASURED S22 (~6.4 t/s, ~2.2x idle). Was a 600 guess.
-IDLE_STEP_MS   = 350       # IDLE-wander tick — MEASURED S22 (~2.9 t/s when actually moving)
-IDLE_MOVE_PROB = 0.27      # chance to step on an idle tick (=> ~73% idle, S22)
-IDLE_RADIUS    = 17        # wander stays within ~17 tiles of spawn (S22)
+IDLE_STEP_MS   = 350       # IDLE per-tile walk pace toward the wander target — MEASURED S22
+IDLE_RADIUS    = 11        # wander stays within ~11 tiles of HOME — MEASURED S25 (dest-centroid; was S22's looser 17)
+# --- DATA-DRIVEN idle wander (S29): fit from 4 aggro captures, 24,037 mob moves -------------
+# The server re-targets an idle mob to a new destination ~every 2.0s. Hop length (Chebyshev
+# between consecutive destinations) is bimodal: ~43% jump to the zone edge (10), ~20% short
+# hops (3), the rest spread 4-9. Direction is ~uniform-random (persistence 0.12), so idle is a
+# jittery bounce inside the home zone, NOT a directed walk. Replaces the old 1-tile/27%-prob model.
+WANDER_HOP_WEIGHTS = [323, 613, 4847, 1052, 1264, 1330, 1406, 1386, 1500, 10316]  # hops 1..10, empirical counts
+WANDER_RETARGET_MS = (1481, 2581)   # re-target interval sampled in this IQR (median ~2030ms)
+
+
+def wander_target(grid, hx, hy, cx, cy):
+    """Pick a new idle destination: empirical Chebyshev hop, random direction, clamped to the home zone."""
+    hop = random.choices(range(1, 11), weights=WANDER_HOP_WEIGHTS)[0]
+    for _ in range(8):
+        if random.random() < 0.5:
+            dx, dy = random.choice((-hop, hop)), random.randint(-hop, hop)
+        else:
+            dx, dy = random.randint(-hop, hop), random.choice((-hop, hop))
+        tx, ty = cx + dx, cy + dy
+        if grid.is_walkable(tx, ty) and chebyshev((hx, hy), (tx, ty)) <= IDLE_RADIUS:
+            return tx, ty
+    return cx, cy   # no valid spot this round -> stay put (an idle pause)
 
 MOB_ATTACK_MS  = 3500      # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss). Old note: S22b/c read via the
                            #   PACKET sniffer, NOT HP% (misses invisible + potions reset HP%). Guess.
@@ -104,11 +124,14 @@ PLAYER_COL = (255, 220, 0)
 
 class Mob:
     __slots__ = ("vnum", "x", "y", "home_x", "home_y", "hp", "hp_max",
-                 "alive", "aggro", "last_step", "last_atk", "dead_at")
+                 "alive", "aggro", "last_step", "last_atk", "dead_at",
+                 "wx", "wy", "next_retarget")
     def __init__(self, vnum, x, y):
         self.vnum = vnum
         self.x, self.y = x, y
         self.home_x, self.home_y = x, y     # spawn tile: idle wander stays near here; respawn point
+        self.wx, self.wy = x, y             # current idle wander target (S29 data-driven)
+        self.next_retarget = random.randint(0, WANDER_RETARGET_MS[1])  # desync mobs
         self.hp_max = HP[vnum]
         self.hp = self.hp_max
         self.alive = True
@@ -218,14 +241,22 @@ class VizWorld:
                 m.aggro = True
 
             if not m.aggro:
-                # IDLE: slow random wander near spawn (~73% idle), well below chase speed
-                if now - m.last_step >= IDLE_STEP_MS:
+                # IDLE (S29 data-driven): re-target ~every 2s to an empirical 3-10 tile hop in a
+                # random direction, tethered to home (~11); then walk toward it at idle pace. Getting
+                # re-targeted before arriving is what produces the realistic jittery bounce.
+                if now >= m.next_retarget:
+                    m.wx, m.wy = wander_target(self.grid, m.home_x, m.home_y, m.x, m.y)
+                    m.next_retarget = now + random.randint(*WANDER_RETARGET_MS)
+                if (m.x != m.wx or m.y != m.wy) and now - m.last_step >= IDLE_STEP_MS:
                     m.last_step = now
-                    if random.random() < IDLE_MOVE_PROB:
-                        nx, ny = m.x + random.randint(-1, 1), m.y + random.randint(-1, 1)
-                        if (self.grid.is_walkable(nx, ny)
-                                and chebyshev((m.home_x, m.home_y), (nx, ny)) <= IDLE_RADIUS):
-                            m.x, m.y = nx, ny
+                    sx = (m.wx > m.x) - (m.wx < m.x)
+                    sy = (m.wy > m.y) - (m.wy < m.y)
+                    if self.grid.is_walkable(m.x + sx, m.y + sy):
+                        m.x += sx; m.y += sy
+                    elif self.grid.is_walkable(m.x + sx, m.y):
+                        m.x += sx
+                    elif self.grid.is_walkable(m.x, m.y + sy):
+                        m.y += sy
                 continue
 
             rng = ATTACK_RANGE[m.vnum]
