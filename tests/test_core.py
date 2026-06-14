@@ -93,7 +93,7 @@ def test_farm_2706_profiles_loaded():
     assert set(farm.PROFILES.keys()) == {6232, 6233}
     jelly = farm.PROFILES[6232]
     golem = farm.PROFILES[6233]
-    assert jelly.aggro_radius == 12 and golem.aggro_radius == 12   # CONFIRMED
+    assert jelly.aggro_radius == 7 and golem.aggro_radius == 7     # MEASURED-S25 (~6-7)
     # S24: both 307705 HP (CONFIRMED via st maxHP); difference between mobs is DAMAGE TAKEN.
     assert jelly.hp_max == 307705 and golem.hp_max == 307705
     assert jelly.player_dmg_base == 101000                         # MEASURED-S21 (non-crit)
