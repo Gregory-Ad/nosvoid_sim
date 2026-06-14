@@ -20,6 +20,17 @@ WHAT'S MODELLED (LIVE-VERIFIED — packet log + Cheat Engine memory reads):
   - mob HP: BOTH ~306k (Golem is NOT 345k; it just takes ~half damage -> ~2x hits)
   - cooldown 0.7s, cast/animation ~0.65s; mob damage to you 465/hit; your HP 54754
   - aggro radius 12 tiles (Chebyshev): a mob starts chasing within 12; attacks when in range
+  - MOB MOVEMENT (Session 22, HIGH): idle = slow wander near spawn (~1 tile/350ms, ~73%
+    idle, radius ~17); chase = ~157 ms/tile (~6.4 t/s), i.e. ~2.2x faster on aggro. Mobs
+    chase at ~6.4 vs player walk ~5.4 t/s -> can't be out-walked (survival is potion-bound).
+  - no leash observed (S22); no cap on simultaneous aggro (all 90 can pull at once).
+
+STILL UNMEASURED (the one real gap left for this window):
+  - MOB_ATTACK_MS (mob attack cadence). S22b/c: can't be read from HP% (mob misses are
+    invisible + potions reset HP%). Measure via the PACKET sniffer next. Current value = guess.
+  - respawn: only 1 low-confidence sample (~45s after a full wipe). Wired but OFF by default
+    (RESPAWN_ENABLED) so it can't silently distort manual validation — matches gym_env, which
+    ends the episode on wipe rather than respawning.
 
 This is a VALIDATION tool, not the agent. No RL here. Run:
     pip install pygame
@@ -51,6 +62,8 @@ TARGET_RANGE = 9           # targeting/cast reach in tiles (Chebyshev) — Skill
 AOE_RADIUS   = 2           # blast radius around the TARGET (Chebyshev = 5x5)  [measured ~2]
 PLAYER_CD_MS = 700         # CONFIRMED cooldown (su token[5]=7)
 CAST_MS      = 654         # CONFIRMED cast/animation (ct->su); effective cycle ~max(CD,cast)
+PLAYER_STEP_MS = 185       # walk cadence ~5.4 t/s (gym_env player_step_ms). Mob chase ~6.4 t/s
+                           #   is FASTER -> you can't out-walk mobs (survival is potion-bound).
 
 # Per-mob damage you deal (base = non-crit); crit = x2, rolled independently per target.
 PLAYER_DMG_BASE = {6232: 101000, 6233: 52000}   # Jelly ~101k / Golem ~52k (Golem higher def)
@@ -61,8 +74,21 @@ HP = {6232: 306000, 6233: 306000}     # CORRECTED: both ~306k (fitted from dmg +
 NAME = {6232: "Bouncing Jelly", 6233: "Ice Golem"}
 COLOR = {6232: (90, 200, 255), 6233: (170, 95, 225)}
 ATTACK_RANGE = {6232: 1, 6233: 2}      # mob basic range (table baseline; verify)
-MOB_STEP_MS = 600          # mob chase-step cadence — NOT yet cleanly measured (tune)
-MOB_ATTACK_MS = 1000       # mob attack cadence when in range — NOT yet measured (tune)
+
+# ---- mob movement (Session 22, HIGH confidence unless noted) ----
+MOB_STEP_MS    = 157       # CHASE cadence — MEASURED S22 (~6.4 t/s, ~2.2x idle). Was a 600 guess.
+IDLE_STEP_MS   = 350       # IDLE-wander tick — MEASURED S22 (~2.9 t/s when actually moving)
+IDLE_MOVE_PROB = 0.27      # chance to step on an idle tick (=> ~73% idle, S22)
+IDLE_RADIUS    = 17        # wander stays within ~17 tiles of spawn (S22)
+
+MOB_ATTACK_MS  = 1000      # ⚠ STILL UNMEASURED. Mob attack cadence in range. S22b/c: read via the
+                           #   PACKET sniffer, NOT HP% (misses invisible + potions reset HP%). Guess.
+
+# Respawn is a single low-confidence sample (~45s after a FULL wipe, same ids reused). Left OFF so
+# it can't silently distort manual validation; flip on to test respawn specifically. (gym_env also
+# does not respawn mid-episode — it terminates on wipe.)
+RESPAWN_ENABLED = False
+RESPAWN_MS      = 45000    # ~45s after wipe — S22 (LOW-MED, 1 sample)
 
 CELL = 6                   # pixels per tile
 HUD_H = 96
@@ -73,16 +99,19 @@ PLAYER_COL = (255, 220, 0)
 
 
 class Mob:
-    __slots__ = ("vnum", "x", "y", "hp", "hp_max", "alive", "aggro", "last_step", "last_atk")
+    __slots__ = ("vnum", "x", "y", "home_x", "home_y", "hp", "hp_max",
+                 "alive", "aggro", "last_step", "last_atk", "dead_at")
     def __init__(self, vnum, x, y):
         self.vnum = vnum
         self.x, self.y = x, y
+        self.home_x, self.home_y = x, y     # spawn tile: idle wander stays near here; respawn point
         self.hp_max = HP[vnum]
         self.hp = self.hp_max
         self.alive = True
         self.aggro = False
         self.last_step = 0
         self.last_atk = 0
+        self.dead_at = 0
 
 
 class VizWorld:
@@ -142,6 +171,7 @@ class VizWorld:
             m.hp -= PLAYER_DMG_BASE[m.vnum] * (CRIT_MULT if crit else 1)
             if m.hp <= 0:
                 m.alive = False
+                m.dead_at = now
                 killed += 1
         # 3) remember the strike centre for the on-screen flash
         self.last_strike = (target.x, target.y, now)
@@ -149,15 +179,35 @@ class VizWorld:
         self.log = self.log[-6:]
 
     def update_mobs(self, now):
-        for m in self.alive_mobs():
+        for m in self.mobs:
+            # respawn (off by default): a dead mob returns to its spawn tile after RESPAWN_MS
+            if not m.alive:
+                if RESPAWN_ENABLED and now - m.dead_at >= RESPAWN_MS:
+                    m.x, m.y = m.home_x, m.home_y
+                    m.hp = m.hp_max
+                    m.alive = True
+                    m.aggro = False
+                    m.last_step = m.last_atk = now
+                continue
+
             d = chebyshev((self.px, self.py), (m.x, m.y))
             if not m.aggro and d <= AGGRO:
                 m.aggro = True
+
             if not m.aggro:
+                # IDLE: slow random wander near spawn (~73% idle), well below chase speed
+                if now - m.last_step >= IDLE_STEP_MS:
+                    m.last_step = now
+                    if random.random() < IDLE_MOVE_PROB:
+                        nx, ny = m.x + random.randint(-1, 1), m.y + random.randint(-1, 1)
+                        if (self.grid.is_walkable(nx, ny)
+                                and chebyshev((m.home_x, m.home_y), (nx, ny)) <= IDLE_RADIUS):
+                            m.x, m.y = nx, ny
                 continue
+
             rng = ATTACK_RANGE[m.vnum]
             if d <= rng:
-                # in range: attack on cadence
+                # in range: attack on cadence (MOB_ATTACK_MS is still a placeholder — see top)
                 if now - m.last_atk >= MOB_ATTACK_MS:
                     m.last_atk = now
                     self.php = max(0, self.php - MOB_DMG)
@@ -165,7 +215,7 @@ class VizWorld:
                         self.log.append("YOU DIED — press R")
                         self.log = self.log[-6:]
             else:
-                # chase: step toward player on cadence
+                # CHASE: step toward player on the measured ~157 ms/tile cadence
                 if now - m.last_step >= MOB_STEP_MS:
                     m.last_step = now
                     sx = (self.px > m.x) - (self.px < m.x)
@@ -214,7 +264,7 @@ def run():
 
         # held movement keys (repeat with a small cooldown)
         keys = pygame.key.get_pressed()
-        if now - move_cd > 90:
+        if now - move_cd > PLAYER_STEP_MS:
             dx = dy = 0
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:  dx = -1
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx = 1
