@@ -1,0 +1,133 @@
+diff --git a/nosvoid_sim/farm_map_2706.py b/nosvoid_sim/farm_map_2706.py
+index e9f4aa2..e708716 100644
+--- a/nosvoid_sim/farm_map_2706.py
++++ b/nosvoid_sim/farm_map_2706.py
+@@ -42,7 +42,8 @@ PLAYER_CD_MS       = 700           # MEASURED-S21 (su Token[5]=7). slot+0x20=10
+ CAST_MS            = 654           # MEASURED-S21 (ct->su gap). Effective cycle ~max(CD,cast)=700.
+ 
+ CRIT_MULTIPLIER = 2.0              # MEASURED-S21 (crit = x2)
+-CRIT_RATE       = 0.42             # MEASURED-S21 (small sample — refine with a longer clean capture)
++CRIT_RATE       = 0.65             # MEASURED-S24 (871-su sample; BUILD-DEPENDENT — S21 was 0.42)
++MOB_HIT_RATE    = 0.53             # MEASURED-S24 (273 hit / 242 miss, mob->player). Miss => 0 dmg.
+ 
+ # Packet skill id of the autoattack is 1078 (and -1 for repeats); 6022 is the
+ # CLIENT skill-bar slot vnum. Identity comes from the packet, not the slot.
+@@ -69,30 +70,32 @@ PROFILES: dict[int, MobProfile] = {
+     6232: MobProfile(
+         vnum=6232,
+         name="Ice Biome Bouncing Jelly",   # CONFIRMED (NpcDataEntry +0x4)
+-        hp_max=306000,                      # FITTED-S21 (~306k; old 300k close, table 250 = WRONG)
+-        aggro_radius=12,                    # CONFIRMED (started chase at exactly dist 12)
+-        leash_radius=0,                     # TODO observe (not yet measured)
++        hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; S21 fit ~306k was close)
++        aggro_radius=12,                    # MEASURED-S26 (~12; onsets 5-12, in-range@13. DISTANCE-ONLY, through walls
++                                            #              [user visual-confirmed]; NOT LOS-gated. Trigger prompt (~1s).
++                                            #              S25's ~7 was AoE-damage-contaminated; 7 was too small.
++        leash_radius=0,                     # CONFIRMED-S25 no leash (chased 59-104 tiles, 124s, no de-aggro)
+         move_speed_tps=0.0,                 # TODO observe (table speed=6; mv token ~29, needs scaling)
+         attack_range=1,                     # TABLE-BASELINE (basicRange=1, melee)
+-        attack_cadence_ms=0,                # TODO observe (roaming sample ~4.6s, too noisy)
++        attack_cadence_ms=3500,             # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss)
+         incoming_damage_min=465,            # CONFIRMED (su Token[12] mob->player = 465; 0 = miss)
+         incoming_damage_max=465,            # CONFIRMED (constant 465 observed)
+-        player_dmg_base=101000,             # MEASURED-S21 (non-crit; ~101k. crit ~202k)
++        player_dmg_base=101000,             # CONFIRMED-S24 (non-crit median ~100k; crit ~200k)
+         respawn_ms=600_000,                 # TABLE-BASELINE (respawn=600 = 10 min; not yet confirmed)
+         fitted=True,
+     ),
+     6233: MobProfile(
+         vnum=6233,
+         name="Ice Biome Ice Golem",         # CONFIRMED
+-        hp_max=306000,                      # FITTED-S21 (~306k; NOT 345k — that was wrong)
+-        aggro_radius=12,                    # CONFIRMED (chase began at dist 12)
+-        leash_radius=0,                     # TODO observe
++        hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; NOT 345k)
++        aggro_radius=12,                    # MEASURED-S26 (~12; distance-only, through walls, prompt trigger)
++        leash_radius=0,                     # CONFIRMED-S25 no leash
+         move_speed_tps=0.0,                 # TODO observe (table speed=10)
+         attack_range=2,                     # TABLE-BASELINE (basicRange=2)
+-        attack_cadence_ms=0,                # TODO observe
++        attack_cadence_ms=3500,             # MEASURED-S24 (same swing ~3.5-4.0s)
+         incoming_damage_min=465,            # CONFIRMED (mob->player 465)
+         incoming_damage_max=465,            # CONFIRMED
+-        player_dmg_base=52000,              # MEASURED-S21 (non-crit; ~52k. crit ~104k -> ~2x Jelly's hits)
++        player_dmg_base=52000,              # CONFIRMED-S24 (non-crit median ~50k; crit ~100k -> ~2x Jelly's hits)
+         respawn_ms=600_000,                 # TABLE-BASELINE
+         fitted=True,
+     ),
+@@ -113,8 +116,12 @@ PROFILES: dict[int, MobProfile] = {
+ 
+ # su packet token layout (CONFIRMED live):
+ #   su [0]atkType [1]atkID [2]tgtType [3]tgtID(server id, != entity+0x00)
+-#      [4]skillVNUM(1078/-1) [5]cooldown(1/10s) [6]? [7]anim
+-#      [8]posX [9]posY [10]alive [11]targetHP%_after [12]DAMAGE [13]hitFlag(5=crit?) [14]?
++#      [4]skillVNUM(1078=primary / -1=AoE-splash) [5]cooldown(1/10s) [6]? [7]anim
++#      [8]posX [9]posY [10]alive [11]targetHP%_after [12]DAMAGE [13]hitType [14]?
++#   [13] hitType (CONFIRMED-S24): 4=MISS, 0=direct hit, 5=AoE-splash hit. NOT crit.
++#        Crit is a separate x2 damage bimodality (rate ~0.65), not flagged here.
++#   NosVoid su = 15 fields: NO Hp/MaxHp tail. Target HP only as % (token[11]);
++#        absolute HP via stat(player) / st(target). st: ... curHP curMP maxHP maxMP.
+ SU_TOKEN_DAMAGE = 12
+ SU_TOKEN_HP_PCT_AFTER = 11
+ SU_TOKEN_ALIVE = 10
+diff --git a/nosvoid_sim/gym_env.py b/nosvoid_sim/gym_env.py
+index 2bbe98b..3baedfe 100644
+--- a/nosvoid_sim/gym_env.py
++++ b/nosvoid_sim/gym_env.py
+@@ -17,8 +17,8 @@ DESIGN (per the review):
+ WHAT IS MEASURED vs PLACEHOLDER (be honest):
+   MEASURED (authoritative, from Session 21 / farm_map_2706):
+     - autoattack = TARGET-centred AoE, range 9, radius 2 (Chebyshev, 5x5)
+-    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.42
+-    - both mobs ~306k HP, incoming 465/hit, player 54754 HP, aggro 12
++    - cooldown 0.7 s, per-mob damage (Jelly ~101k / Golem ~52k), crit x2 @ ~0.65 [S24]
++    - both mobs 307705 HP, incoming 465/hit @ 53% (cadence ~3.5-4s), player 54754 HP, aggro 12
+   PLACEHOLDER (flagged; the load-bearing unknowns for the positioning problem):
+     - player_step_ms (move cadence), mob_step_ms (chase), mob_attack_ms, leash
+   => The PLAYER side is faithful; the SURVIVAL/kiting side depends on the
+@@ -90,7 +90,8 @@ class EnvConfig:
+     # --- UNMEASURED timings (PLACEHOLDERS â€” measure live next) ---
+     player_step_ms: int = 185          # time to walk one tile (tie to walk speed 15 later)
+     mob_step_ms: int = 157             # mob chase-step cadence (placeholder)
+-    mob_attack_ms: int = 1000          # mob attack cadence when in range (placeholder)
++    mob_attack_ms: int = 3500          # MEASURED-S24 (swing floor 3427ms, mode 4000ms; tail=aggro loss)
++    mob_hit_chance: float = 0.53       # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.
+     leash_radius: int = 0              # 0 = no leash / chase forever (placeholder)
+     sub_dt_ms: int = 100               # fine sub-step granularity for the mob sim
+     # --- reward shaping (objective = clear fastest, stay alive) ---
+@@ -212,7 +213,8 @@ class FarmClearEnv(gym.Env):
+                 if d <= prof.attack_range:
+                     if now - self._last_atk.get(m.eid, -10**9) >= self.cfg.mob_attack_ms:
+                         self._last_atk[m.eid] = now
+-                        if p.hp is not None:
++                        # MEASURED-S24: mob lands only ~53% of swings (miss => 0 dmg)
++                        if p.hp is not None and random.random() < self.cfg.mob_hit_chance:
+                             p.hp = max(0, p.hp - prof.incoming_damage_max)
+                 else:
+                     if now - self._last_step.get(m.eid, -10**9) >= self.cfg.mob_step_ms:
+@@ -289,7 +291,7 @@ class FarmClearEnv(gym.Env):
+         _, nd = self.nearest_mob()
+         n_adj = self.n_adjacent()
+         # incoming threat ~ adjacent mobs * dmg/sec / player max hp, normalised
+-        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max *
++        threat = (n_adj * farm.PROFILES[6232].incoming_damage_max * self.cfg.mob_hit_chance *
+                   (1000.0 / max(1, self.cfg.mob_attack_ms))) / max(1, p.hp_max or 1)
+         feats = [
+             (p.hp or 0) / (p.hp_max or 1),
+diff --git a/tests/test_core.py b/tests/test_core.py
+index 319f71c..bf0374d 100644
+--- a/tests/test_core.py
++++ b/tests/test_core.py
+@@ -93,9 +93,9 @@ def test_farm_2706_profiles_loaded():
+     assert set(farm.PROFILES.keys()) == {6232, 6233}
+     jelly = farm.PROFILES[6232]
+     golem = farm.PROFILES[6233]
+-    assert jelly.aggro_radius == 12 and golem.aggro_radius == 12   # CONFIRMED
+-    # SESSION 21: both ~306k HP; the difference between mobs is DAMAGE TAKEN.
+-    assert jelly.hp_max == 306000 and golem.hp_max == 306000
++    assert jelly.aggro_radius == 12 and golem.aggro_radius == 12   # MEASURED-S26 (~12, distance-only/through-walls)
++    # S24: both 307705 HP (CONFIRMED via st maxHP); difference between mobs is DAMAGE TAKEN.
++    assert jelly.hp_max == 307705 and golem.hp_max == 307705
+     assert jelly.player_dmg_base == 101000                         # MEASURED-S21 (non-crit)
+     assert golem.player_dmg_base == 52000                          # MEASURED-S21 (~half -> ~2x hits)
+     assert jelly.name == "Ice Biome Bouncing Jelly"

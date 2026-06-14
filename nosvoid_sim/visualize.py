@@ -19,7 +19,7 @@ WHAT'S MODELLED (LIVE-VERIFIED — packet log + Cheat Engine memory reads):
   - per-mob damage: Jelly ~101k, Golem ~52k (Golem has higher defence); crit = x2, per target
   - mob HP: BOTH ~306k (Golem is NOT 345k; it just takes ~half damage -> ~2x hits)
   - cooldown 0.7s, cast/animation ~0.65s; mob damage to you 465/hit; your HP 54754
-  - aggro radius ~7 tiles (Chebyshev) [S25]: a mob starts chasing within ~7; attacks when in range
+  - aggro radius ~12 tiles (Chebyshev) [S26]: mob chases within ~12; DISTANCE-ONLY (through walls, not LOS-gated); prompt (~1s)
   - MOB MOVEMENT (Session 22, HIGH): idle = slow wander near spawn (~1 tile/350ms, ~73%
     idle, radius ~17); chase = ~157 ms/tile (~6.4 t/s), i.e. ~2.2x faster on aggro. Mobs
     chase at ~6.4 vs player walk ~5.4 t/s -> can't be out-walked (survival is potion-bound).
@@ -52,7 +52,7 @@ from .pathfind import chebyshev
 from . import _map2706_data as M
 
 # ---- tuning (LIVE-VERIFIED: packet log + Cheat Engine memory reads) ----
-AGGRO = 7                  # MEASURED-S25 (~6-7; 58 onsets median 6). Old 12 was untested table.
+AGGRO = 12                 # MEASURED-S26 (~12; distance-only, THROUGH WALLS [user-confirmed], NOT LOS-gated, prompt trigger)
 PLAYER_HP_MAX = 54754      # CONFIRMED
 MOB_DMG = 465              # CONFIRMED incoming dmg per mob hit
 MOB_HIT_CHANCE = 0.53      # MEASURED-S24 (273 hit / 242 miss). Miss => 0 dmg this swing.

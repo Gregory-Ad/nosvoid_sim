@@ -71,7 +71,9 @@ PROFILES: dict[int, MobProfile] = {
         vnum=6232,
         name="Ice Biome Bouncing Jelly",   # CONFIRMED (NpcDataEntry +0x4)
         hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; S21 fit ~306k was close)
-        aggro_radius=7,                     # MEASURED-S25 (~6-7; 58 onsets, median 6). Old 12 = untested table.
+        aggro_radius=12,                    # MEASURED-S26 (~12; onsets 5-12, in-range@13. DISTANCE-ONLY, through walls
+                                            #              [user visual-confirmed]; NOT LOS-gated. Trigger prompt (~1s).
+                                            #              S25's ~7 was AoE-damage-contaminated; 7 was too small.
         leash_radius=0,                     # CONFIRMED-S25 no leash (chased 59-104 tiles, 124s, no de-aggro)
         move_speed_tps=0.0,                 # TODO observe (table speed=6; mv token ~29, needs scaling)
         attack_range=1,                     # TABLE-BASELINE (basicRange=1, melee)
@@ -86,7 +88,7 @@ PROFILES: dict[int, MobProfile] = {
         vnum=6233,
         name="Ice Biome Ice Golem",         # CONFIRMED
         hp_max=307705,                      # CONFIRMED-S24 (st maxHP=307705; NOT 345k)
-        aggro_radius=7,                     # MEASURED-S25 (~6-7)
+        aggro_radius=12,                    # MEASURED-S26 (~12; distance-only, through walls, prompt trigger)
         leash_radius=0,                     # CONFIRMED-S25 no leash
         move_speed_tps=0.0,                 # TODO observe (table speed=10)
         attack_range=2,                     # TABLE-BASELINE (basicRange=2)
